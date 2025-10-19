@@ -1,0 +1,466 @@
+import { Request, Response } from "express";
+import { AppDataSource } from "../data-source";
+import { Student } from "../entities/Student";
+import { User } from "../entities/User";
+import { Attendance } from "../entities/Attendance";
+import bcrypt from "bcryptjs";
+
+export async function listUsers(req: Request, res: Response) {
+  try {
+    const userRepo = AppDataSource.getRepository(User);
+    const studentRepo = AppDataSource.getRepository(Student);
+    const users = await userRepo.find();
+    
+    // Sync profile images from Student records to User records
+    for (const user of users) {
+      if (user.role === 'SECRETARY' && !user.profileImageUrl) {
+        const student = await studentRepo.findOne({ where: { email: user.email } });
+        if (student && student.profileImageUrl) {
+          console.log(`Syncing profile image for secretary ${user.email}: ${student.profileImageUrl}`);
+          await userRepo.update(user.id, { profileImageUrl: student.profileImageUrl });
+          user.profileImageUrl = student.profileImageUrl;
+        }
+      }
+    }
+    
+    console.log('All users in database:', users.map(u => ({ id: u.id, email: u.email, role: u.role, fullName: u.fullName, profileImageUrl: u.profileImageUrl })));
+    
+    return res.json({
+      message: "Users retrieved successfully",
+      users: users.map(u => ({ id: u.id, email: u.email, role: u.role, fullName: u.fullName, profileImageUrl: u.profileImageUrl }))
+    });
+  } catch (error) {
+    console.error('List users error:', error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+}
+
+export async function syncSecretaryProfileImages(req: Request, res: Response) {
+  try {
+    const userRepo = AppDataSource.getRepository(User);
+    const studentRepo = AppDataSource.getRepository(Student);
+    
+    // Get all secretary users
+    const secretaries = await userRepo.find({ where: { role: 'SECRETARY' } });
+    let syncedCount = 0;
+    
+    for (const secretary of secretaries) {
+      const student = await studentRepo.findOne({ where: { email: secretary.email } });
+      if (student && student.profileImageUrl && !secretary.profileImageUrl) {
+        await userRepo.update(secretary.id, { profileImageUrl: student.profileImageUrl });
+        syncedCount++;
+        console.log(`Synced profile image for secretary ${secretary.email}: ${student.profileImageUrl}`);
+      }
+    }
+    
+    return res.json({
+      message: `Successfully synced profile images for ${syncedCount} secretaries`,
+      syncedCount
+    });
+  } catch (error) {
+    console.error('Sync profile images error:', error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+}
+
+export async function createSecretary(req: Request, res: Response) {
+  try {
+    const { 
+      fullName, 
+      email, 
+      phone, 
+      studentId, 
+      level, 
+      hall, 
+      gender, 
+      role,
+      programDurationYears, 
+      dateOfAdmission, 
+      profileImageUrl,
+      password 
+    } = req.body;
+
+    console.log('Creating secretary with data:', { fullName, email, phone, studentId, level, hall, gender, role, programDurationYears, dateOfAdmission, profileImageUrl });
+
+    if (!fullName || !email || !password || !phone || !studentId || !level || !hall || !gender || !role || !programDurationYears || !dateOfAdmission) {
+      return res.status(400).json({ message: "All required fields must be provided" });
+    }
+
+    const userRepo = AppDataSource.getRepository(User);
+    const studentRepo = AppDataSource.getRepository(Student);
+
+    // Check if user already exists
+    const existingUser = await userRepo.findOne({ where: { email } });
+    if (existingUser) {
+      console.log('User already exists with email:', email);
+      return res.status(400).json({ message: "User with this email already exists" });
+    }
+
+    // Check if student code already exists
+    const existingStudent = await studentRepo.findOne({ where: { code: studentId } });
+    if (existingStudent) {
+      console.log('Student already exists with code:', studentId);
+      return res.status(400).json({ message: "Student with this ID already exists" });
+    }
+
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
+    console.log('Password hashed successfully');
+
+    // Create new secretary user
+    const newUser = userRepo.create({
+      fullName,
+      email,
+      passwordHash: hashedPassword,
+      role: "SECRETARY",
+      profileImageUrl: profileImageUrl || null
+    });
+
+    console.log('Creating user with data:', { fullName, email, role: "SECRETARY" });
+    const savedUser = await userRepo.save(newUser);
+    console.log('User saved successfully with ID:', savedUser.id);
+
+    // Create student record for the secretary
+    const newStudent = studentRepo.create({
+      code: studentId,
+      fullName,
+      email,
+      phone,
+      level,
+      hall,
+      gender,
+      role: role as "Member" | "Visitor",
+      programDurationYears: parseInt(programDurationYears),
+      dateOfAdmission: dateOfAdmission,
+      profileImageUrl: profileImageUrl || null
+    });
+
+    console.log('Creating student with data:', { code: studentId, fullName, email, phone, level, hall, gender, role, programDurationYears, dateOfAdmission, profileImageUrl });
+    await studentRepo.save(newStudent);
+    console.log('Student saved successfully with ID:', newStudent.id);
+
+    const response = {
+      message: "Secretary created successfully",
+      user: {
+        id: savedUser.id,
+        fullName: savedUser.fullName,
+        email: savedUser.email,
+        role: savedUser.role
+      },
+      student: {
+        id: newStudent.id,
+        code: newStudent.code,
+        level: newStudent.level,
+        hall: newStudent.hall
+      }
+    };
+
+    console.log('Secretary creation completed successfully:', response);
+    return res.status(201).json(response);
+
+  } catch (error) {
+    console.error('Create secretary error:', error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+}
+
+export async function promoteStudents(req: Request, res: Response) {
+  try {
+    const { fromLevel, toLevel } = req.body;
+
+    if (!fromLevel || !toLevel) {
+      return res.status(400).json({ message: "From level and to level are required" });
+    }
+
+    if (fromLevel === toLevel) {
+      return res.status(400).json({ message: "From level and to level must be different" });
+    }
+
+    const studentRepo = AppDataSource.getRepository(Student);
+
+    // Find all students with the from level
+    const studentsToPromote = await studentRepo.find({
+      where: { level: fromLevel }
+    });
+
+    if (studentsToPromote.length === 0) {
+      return res.status(404).json({ message: `No students found with level ${fromLevel}` });
+    }
+
+    // Validate promotion is allowed for each student
+    const validPromotions = studentsToPromote.filter(student => {
+      const currentLevelNum = parseInt(fromLevel.replace('L', ''));
+      const maxLevel = student.programDurationYears * 100;
+      
+      if (toLevel === 'ALUMNI') {
+        return currentLevelNum >= maxLevel;
+      } else {
+        const targetLevelNum = parseInt(toLevel.replace('L', ''));
+        return targetLevelNum <= maxLevel && targetLevelNum === currentLevelNum + 100;
+      }
+    });
+
+    if (validPromotions.length === 0) {
+      return res.status(400).json({ 
+        message: `No students can be promoted from ${fromLevel} to ${toLevel} based on their program duration` 
+      });
+    }
+
+    // Update students to the new level or alumni status
+    if (toLevel === 'ALUMNI') {
+      // For alumni, we might want to update a status field or create a separate alumni table
+      // For now, let's update their level to indicate alumni status
+      await studentRepo.update(
+        { level: fromLevel },
+        { level: 'ALUMNI' }
+      );
+    } else {
+      await studentRepo.update(
+        { level: fromLevel },
+        { level: toLevel }
+      );
+    }
+
+    return res.json({
+      message: `Successfully promoted ${validPromotions.length} students from ${fromLevel} to ${toLevel}`,
+      promotedCount: validPromotions.length,
+      fromLevel,
+      toLevel,
+      totalStudents: studentsToPromote.length,
+      validPromotions: validPromotions.length
+    });
+
+  } catch (error) {
+    console.error('Promotion error:', error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+}
+
+export async function getAlumniEligibleStudents(req: Request, res: Response) {
+  try {
+    const studentRepo = AppDataSource.getRepository(Student);
+
+    // Find students who are eligible for alumni status
+    // Students are eligible if they are at the final level of their program
+    const students = await studentRepo.find();
+    
+    const eligibleStudents = students.filter(student => {
+      // Check if student is at the final level of their program
+      const programDuration = student.programDurationYears;
+      const currentLevel = parseInt(student.level.replace('L', ''));
+      const finalLevel = programDuration * 100; // 4 years = L400, 6 years = L600
+      
+      return currentLevel >= finalLevel;
+    });
+
+    return res.json({
+      eligibleCount: eligibleStudents.length,
+      students: eligibleStudents
+    });
+
+  } catch (error) {
+    console.error('Alumni eligibility error:', error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+}
+
+export async function getAttendanceInsights(req: Request, res: Response) {
+  try {
+    const attendanceRepo = AppDataSource.getRepository(Attendance);
+    
+    // Get attendance data for the last 6 months
+    const sixMonthsAgo = new Date();
+    sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+    
+    const attendanceData = await attendanceRepo
+      .createQueryBuilder('attendance')
+      .where('attendance.date >= :startDate', { startDate: sixMonthsAgo.toISOString().split('T')[0] })
+      .getMany();
+
+    // Group by month and calculate insights
+    const monthlyData: { [key: string]: { present: number; absent: number; total: number } } = {};
+    
+    attendanceData.forEach(record => {
+      const month = new Date(record.date).toLocaleDateString('en-US', { month: 'short' });
+      if (!monthlyData[month]) {
+        monthlyData[month] = { present: 0, absent: 0, total: 0 };
+      }
+      
+      if (record.isPresent) {
+        monthlyData[month].present++;
+      } else {
+        monthlyData[month].absent++;
+      }
+      monthlyData[month].total++;
+    });
+
+    // Convert to array format for charts
+    const insights = Object.entries(monthlyData).map(([month, data]) => ({
+      month,
+      present: data.present,
+      absent: data.absent,
+      attendanceRate: data.total > 0 ? Math.round((data.present / data.total) * 100) : 0
+    }));
+
+    return res.json(insights);
+
+  } catch (error) {
+    console.error('Attendance insights error:', error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+}
+
+export async function getGenderDistribution(req: Request, res: Response) {
+  try {
+    const studentRepo = AppDataSource.getRepository(Student);
+    
+    const students = await studentRepo.find();
+    
+    const genderCounts = students.reduce((acc, student) => {
+      acc[student.gender] = (acc[student.gender] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+
+    const colors = ['#3B82F6', '#EF4444', '#10B981', '#F59E0B', '#8B5CF6'];
+    const distribution = Object.entries(genderCounts).map(([name, value], index) => ({
+      name,
+      value,
+      color: colors[index % colors.length]
+    }));
+
+    return res.json(distribution);
+
+  } catch (error) {
+    console.error('Gender distribution error:', error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+}
+
+export async function getHallDistribution(req: Request, res: Response) {
+  try {
+    const studentRepo = AppDataSource.getRepository(Student);
+    const attendanceRepo = AppDataSource.getRepository(Attendance);
+    
+    const students = await studentRepo.find();
+    const today = new Date().toISOString().split('T')[0];
+    
+    // Get today's attendance
+    const todayAttendance = await attendanceRepo.find({
+      where: { date: today }
+    });
+
+    const hallCounts = students.reduce((acc, student) => {
+      if (!acc[student.hall]) {
+        acc[student.hall] = { total: 0, present: 0 };
+      }
+      acc[student.hall].total += 1;
+      
+      // Check if student was present today
+      const attendanceRecord = todayAttendance.find(a => a.studentId === student.id);
+      if (attendanceRecord && attendanceRecord.isPresent) {
+        acc[student.hall].present += 1;
+      }
+      
+      return acc;
+    }, {} as Record<string, { total: number; present: number }>);
+
+    const distribution = Object.entries(hallCounts).map(([hall, data]) => ({
+      hall,
+      totalStudents: data.total,
+      presentToday: data.present,
+      attendanceRate: Math.round((data.present / data.total) * 100),
+      graduationReady: Math.floor(data.total * 0.1) // Placeholder for graduation ready
+    }));
+
+    return res.json(distribution);
+
+  } catch (error) {
+    console.error('Hall distribution error:', error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+}
+
+export async function getAvailableLevels(req: Request, res: Response) {
+  try {
+    const studentRepo = AppDataSource.getRepository(Student);
+    
+    const students = await studentRepo.find();
+    
+    // Get all unique levels and their student counts
+    const levelCounts = students.reduce((acc, student) => {
+      acc[student.level] = (acc[student.level] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+
+    // Generate all possible levels (L100 to L600)
+    const allLevels = ['L100', 'L200', 'L300', 'L400', 'L500', 'L600'];
+    
+    // Format levels with student counts
+    const availableLevels = allLevels.map(level => ({
+      level,
+      count: levelCounts[level] || 0,
+      label: `${level} (${levelCounts[level] || 0} students)`,
+      hasStudents: (levelCounts[level] || 0) > 0
+    }));
+
+    return res.json(availableLevels);
+
+  } catch (error) {
+    console.error('Available levels error:', error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+}
+
+export async function getValidPromotionTargets(req: Request, res: Response) {
+  try {
+    const { fromLevel } = req.query;
+    
+    if (!fromLevel) {
+      return res.status(400).json({ message: "From level is required" });
+    }
+
+    const studentRepo = AppDataSource.getRepository(Student);
+    
+    // Get students at the from level
+    const studentsAtLevel = await studentRepo.find({
+      where: { level: fromLevel as string }
+    });
+
+    if (studentsAtLevel.length === 0) {
+      return res.json([]);
+    }
+
+    // Get unique program durations for students at this level
+    const programDurations = [...new Set(studentsAtLevel.map(s => s.programDurationYears))];
+    
+    // Generate valid target levels based on program durations
+    const validTargets = new Set<string>();
+    
+    programDurations.forEach(duration => {
+      const currentLevelNum = parseInt((fromLevel as string).replace('L', ''));
+      const maxLevel = duration * 100; // 4 years = L400, 6 years = L600
+      
+      // Add next level if not at max
+      if (currentLevelNum < maxLevel) {
+        const nextLevel = `L${currentLevelNum + 100}`;
+        validTargets.add(nextLevel);
+      } else {
+        // At max level, can promote to Alumni
+        validTargets.add('ALUMNI');
+      }
+    });
+
+    // Convert to array and sort
+    const targets = Array.from(validTargets).sort((a, b) => {
+      if (a === 'ALUMNI') return 1;
+      if (b === 'ALUMNI') return -1;
+      return parseInt(a.replace('L', '')) - parseInt(b.replace('L', ''));
+    });
+
+    return res.json(targets);
+
+  } catch (error) {
+    console.error('Valid promotion targets error:', error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+}
