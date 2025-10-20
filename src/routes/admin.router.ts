@@ -9,7 +9,8 @@ import {
   getGenderDistribution,
   getHallDistribution,
   getAvailableLevels,
-  getValidPromotionTargets
+  getValidPromotionTargets,
+  undoPromotion
 } from "../controllers/admin.controller";
 import { requireAuth, requireRole } from "../middleware/auth";
 
@@ -19,6 +20,7 @@ adminRouter.get("/users", requireAuth, requireRole("SUPER_ADMIN"), listUsers);
 adminRouter.post("/sync-profile-images", requireAuth, requireRole("SUPER_ADMIN"), syncSecretaryProfileImages);
 adminRouter.post("/secretaries", requireAuth, requireRole("SUPER_ADMIN"), createSecretary);
 adminRouter.post("/promote-students", requireAuth, requireRole("SUPER_ADMIN"), promoteStudents);
+adminRouter.post("/promotions/undo/:actionId", requireAuth, requireRole("SUPER_ADMIN"), undoPromotion);
 adminRouter.get("/alumni-eligible", requireAuth, requireRole("SUPER_ADMIN"), getAlumniEligibleStudents);
 adminRouter.get("/attendance-insights", requireAuth, requireRole("SUPER_ADMIN"), getAttendanceInsights);
 adminRouter.get("/gender-distribution", requireAuth, requireRole("SUPER_ADMIN"), getGenderDistribution);

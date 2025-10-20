@@ -1,0 +1,18 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.adminRouter = void 0;
+const express_1 = require("express");
+const admin_controller_1 = require("../controllers/admin.controller");
+const auth_1 = require("../middleware/auth");
+exports.adminRouter = (0, express_1.Router)();
+exports.adminRouter.get("/users", auth_1.requireAuth, (0, auth_1.requireRole)("SUPER_ADMIN"), admin_controller_1.listUsers);
+exports.adminRouter.post("/sync-profile-images", auth_1.requireAuth, (0, auth_1.requireRole)("SUPER_ADMIN"), admin_controller_1.syncSecretaryProfileImages);
+exports.adminRouter.post("/secretaries", auth_1.requireAuth, (0, auth_1.requireRole)("SUPER_ADMIN"), admin_controller_1.createSecretary);
+exports.adminRouter.post("/promote-students", auth_1.requireAuth, (0, auth_1.requireRole)("SUPER_ADMIN"), admin_controller_1.promoteStudents);
+exports.adminRouter.post("/promotions/undo/:actionId", auth_1.requireAuth, (0, auth_1.requireRole)("SUPER_ADMIN"), admin_controller_1.undoPromotion);
+exports.adminRouter.get("/alumni-eligible", auth_1.requireAuth, (0, auth_1.requireRole)("SUPER_ADMIN"), admin_controller_1.getAlumniEligibleStudents);
+exports.adminRouter.get("/attendance-insights", auth_1.requireAuth, (0, auth_1.requireRole)("SUPER_ADMIN"), admin_controller_1.getAttendanceInsights);
+exports.adminRouter.get("/gender-distribution", auth_1.requireAuth, (0, auth_1.requireRole)("SUPER_ADMIN"), admin_controller_1.getGenderDistribution);
+exports.adminRouter.get("/hall-distribution", auth_1.requireAuth, (0, auth_1.requireRole)("SUPER_ADMIN"), admin_controller_1.getHallDistribution);
+exports.adminRouter.get("/available-levels", auth_1.requireAuth, (0, auth_1.requireRole)("SUPER_ADMIN"), admin_controller_1.getAvailableLevels);
+exports.adminRouter.get("/valid-promotion-targets", auth_1.requireAuth, (0, auth_1.requireRole)("SUPER_ADMIN"), admin_controller_1.getValidPromotionTargets);

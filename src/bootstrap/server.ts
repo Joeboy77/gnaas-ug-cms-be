@@ -8,26 +8,48 @@ export async function startServer() {
   await AppDataSource.initialize();
   const app = createApp();
   const repo = AppDataSource.getRepository(User);
-  const existing = await repo.findOne({ where: { role: "SUPER_ADMIN" } });
-  if (!existing) {
-    const email = process.env.SEED_ADMIN_EMAIL || "admin@gnaas.local";
-    const password = process.env.SEED_ADMIN_PASSWORD || "admin123";
-    const passwordHash = await bcrypt.hash(password, 10);
-    const admin = repo.create({
-      fullName: "Super Admin",
-      email,
-      role: "SUPER_ADMIN",
-      passwordHash,
-      level: null,
-      hall: null,
-      programDurationYears: null,
-      dateOfAdmission: null,
-      phone: null,
-      profileImageUrl: null,
-    });
-    await repo.save(admin);
-    console.log("Seeded Super Admin:", email);
+  
+  // Check if any super admin exists
+  const existingAdmin = await repo.findOne({ where: { role: "SUPER_ADMIN" } });
+  if (!existingAdmin) {
+    // Create 3 super admins
+    const superAdmins = [
+      {
+        fullName: "Super Admin",
+        email: process.env.SEED_ADMIN_EMAIL || "admin@gnaas.local",
+        password: process.env.SEED_ADMIN_PASSWORD || "admin123456",
+      },
+      {
+        fullName: "John Admin",
+        email: "it1.admin@gnaas.local",
+        password: "john123456",
+      },
+      {
+        fullName: "Sarah Admin",
+        email: "it2.admin@gnaas.local",
+        password: "sarah123456",
+      }
+    ];
+
+    for (const adminData of superAdmins) {
+      const passwordHash = await bcrypt.hash(adminData.password, 10);
+      const admin = repo.create({
+        fullName: adminData.fullName,
+        email: adminData.email,
+        role: "SUPER_ADMIN",
+        passwordHash,
+        level: null,
+        hall: null,
+        programDurationYears: null,
+        dateOfAdmission: null,
+        phone: null,
+        profileImageUrl: null,
+      });
+      await repo.save(admin);
+      console.log(`Seeded Super Admin: ${adminData.email} (Password: ${adminData.password})`);
+    }
   }
+  
   app.listen(port, () => console.log(`BE listening on ${port}`));
 }
 

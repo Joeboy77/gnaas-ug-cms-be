@@ -82,6 +82,10 @@ export async function exportStudents(req: Request, res: Response) {
       if (personalInfo) {
         baseData['Gender'] = student.gender;
         baseData['Program Duration'] = `${student.programDurationYears} years`;
+        baseData['Program of Study'] = student.programOfStudy || 'N/A';
+        baseData['Expected Completion Year'] = student.expectedCompletionYear || 'N/A';
+        baseData['Date of Birth'] = student.dateOfBirth ? new Date(student.dateOfBirth).toLocaleDateString() : 'N/A';
+        baseData['Place of Residence'] = student.residence || 'N/A';
       }
 
       // Add contact information if requested
@@ -90,9 +94,27 @@ export async function exportStudents(req: Request, res: Response) {
         baseData['Email'] = student.email || 'N/A';
       }
 
+      // Add guardian information if requested
+      if (personalInfo) {
+        baseData['Parent/Guardian Name'] = student.guardianName || 'N/A';
+        baseData['Parent/Guardian Contact'] = student.guardianContact || 'N/A';
+      }
+
+      // Add church information if requested
+      if (personalInfo) {
+        baseData['Local Church Name'] = student.localChurchName || 'N/A';
+        baseData['Local Church Location'] = student.localChurchLocation || 'N/A';
+        baseData['District'] = student.district || 'N/A';
+      }
+
       // Add admission date if available
       if (student.dateOfAdmission) {
         baseData['Date of Admission'] = new Date(student.dateOfAdmission).toLocaleDateString();
+      }
+
+      // Add profile image URL if available
+      if (student.profileImageUrl) {
+        baseData['Profile Image URL'] = student.profileImageUrl;
       }
 
       return baseData;

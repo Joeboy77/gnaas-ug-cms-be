@@ -10,7 +10,11 @@ import {
   getMembersAbsent,
   getVisitors,
   getWeeklyAttendanceStats,
-  getMonthlyAttendanceTrends
+  getMonthlyAttendanceTrends,
+  markAllMembersPresent,
+  undoMarkAllMembers,
+  undoIndividualAttendance,
+  unmarkMemberAttendance
 } from "../controllers/attendance.controller";
 import { requireAuth, requireRoles } from "../middleware/auth";
 
@@ -25,8 +29,18 @@ attendanceRouter.get("/unmarked-members/:date", requireAuth, getUnmarkedMembers)
 // Mark member attendance
 attendanceRouter.post("/mark-member/:date", requireAuth, requireRoles("SUPER_ADMIN", "SECRETARY"), markMemberAttendance);
 
+// Unmark member attendance
+attendanceRouter.delete("/unmark-member/:date/:studentId", requireAuth, requireRoles("SUPER_ADMIN", "SECRETARY"), unmarkMemberAttendance);
+
 // Mark visitor attendance
 attendanceRouter.post("/mark-visitor/:date", requireAuth, requireRoles("SUPER_ADMIN", "SECRETARY"), markVisitorAttendance);
+
+// Mark all members present for a date
+attendanceRouter.post("/mark-all/:date", requireAuth, requireRoles("SUPER_ADMIN", "SECRETARY"), markAllMembersPresent);
+attendanceRouter.post("/mark-all/undo/:actionId", requireAuth, requireRoles("SUPER_ADMIN", "SECRETARY"), undoMarkAllMembers);
+
+// Undo individual attendance marking
+attendanceRouter.post("/individual/undo/:actionId", requireAuth, requireRoles("SUPER_ADMIN", "SECRETARY"), undoIndividualAttendance);
 
 // Close attendance for a date
 attendanceRouter.post("/close/:date", requireAuth, requireRoles("SUPER_ADMIN", "SECRETARY"), closeAttendance);

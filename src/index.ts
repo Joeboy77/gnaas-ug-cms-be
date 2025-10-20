@@ -8,6 +8,7 @@ import { studentsRouter } from "./routes/students.router";
 import { attendanceRouter } from "./routes/attendance.router";
 import { exportRouter } from "./routes/export.router";
 import { reportsRouter } from "./routes/reports.router";
+import bulkUploadRouter from "./routes/bulkUpload.router";
 
 dotenv.config();
 
@@ -22,6 +23,7 @@ export const createApp = () => {
   app.use("/attendance", attendanceRouter);
   app.use("/export", exportRouter);
   app.use("/reports", reportsRouter);
+  app.use("/bulk-upload", bulkUploadRouter);
   return app;
 };
 

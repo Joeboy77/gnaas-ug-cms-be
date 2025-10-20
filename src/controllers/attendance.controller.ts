@@ -3,6 +3,7 @@ import { AppDataSource } from "../data-source";
 import { Attendance, AttendanceType, AttendanceStatus } from "../entities/Attendance";
 import { Student } from "../entities/Student";
 import { getMailjet } from "../mail/mailjet";
+import { ActionLog } from "../entities/ActionLog";
 
 const LOGO_URL = "https://i.postimg.cc/fbYRk0dM/gnaasug.png";
 
@@ -76,6 +77,7 @@ export async function markMemberAttendance(req: Request, res: Response) {
     const userId = (req as any).auth?.sub;
     
     const repo = AppDataSource.getRepository(Attendance);
+    const actionRepo = AppDataSource.getRepository(ActionLog);
     
     // Check if attendance is already closed for this date
     const existingAttendance = await repo.findOne({
@@ -103,7 +105,16 @@ export async function markMemberAttendance(req: Request, res: Response) {
       markedBy: userId
     });
     
-    await repo.save(attendance);
+    const savedAttendance = await repo.save(attendance);
+    
+    // Log action for undo functionality
+    const action = actionRepo.create({
+      actionType: 'MARK_INDIVIDUAL_ATTENDANCE',
+      performerUserId: userId,
+      metadata: { date, studentId, isPresent },
+      undoData: { attendanceId: savedAttendance.id }
+    });
+    const savedAction = await actionRepo.save(action);
     
     // Get student info for email
     if (isPresent) {
@@ -130,7 +141,10 @@ export async function markMemberAttendance(req: Request, res: Response) {
       }
     }
     
-    return res.status(201).json(attendance);
+    return res.status(201).json({ 
+      ...attendance, 
+      actionId: savedAction.id 
+    });
   } catch (e) {
     console.error(e);
     return res.status(500).json({ message: "Internal server error" });
@@ -322,6 +336,143 @@ export async function getVisitors(req: Request, res: Response) {
     });
 
     return res.json(visitors);
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+}
+
+export async function markAllMembersPresent(req: Request, res: Response) {
+  try {
+    const { date } = req.params;
+    const performerUserId = (req as any).auth?.sub;
+
+    const attendanceRepo = AppDataSource.getRepository(Attendance);
+    const studentRepo = AppDataSource.getRepository(Student);
+    const actionRepo = AppDataSource.getRepository(ActionLog);
+
+    // Get all students and existing marks for the date
+    const students = await studentRepo.find();
+    const existing = await attendanceRepo.find({ where: { date, type: AttendanceType.MEMBER } });
+    const alreadyMarkedIds = new Set(existing.map(e => e.studentId).filter(Boolean) as string[]);
+
+    const createdIds: number[] = [];
+
+    for (const student of students) {
+      if (!alreadyMarkedIds.has(student.id)) {
+        const a = attendanceRepo.create({
+          date,
+          type: AttendanceType.MEMBER,
+          studentId: student.id,
+          isPresent: true,
+          markedBy: performerUserId
+        });
+        const saved = await attendanceRepo.save(a);
+        createdIds.push(saved.id);
+      }
+    }
+
+    // Log action
+    const action = actionRepo.create({
+      actionType: 'MARK_ALL_ATTENDANCE',
+      performerUserId,
+      metadata: { date, type: 'MEMBER' },
+      undoData: { createdAttendanceIds: createdIds }
+    });
+    const savedAction = await actionRepo.save(action);
+
+    return res.json({ success: true, created: createdIds.length, actionId: savedAction.id });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+}
+
+export async function undoMarkAllMembers(req: Request, res: Response) {
+  try {
+    const { actionId } = req.params as { actionId: string };
+    const attendanceRepo = AppDataSource.getRepository(Attendance);
+    const actionRepo = AppDataSource.getRepository(ActionLog);
+
+    const action = await actionRepo.findOne({ where: { id: actionId } });
+    if (!action) return res.status(404).json({ message: 'Action not found' });
+    if (action.actionType !== 'MARK_ALL_ATTENDANCE') return res.status(400).json({ message: 'Invalid action type' });
+    if (action.undone) return res.status(400).json({ message: 'Action already undone' });
+
+    const createdAttendanceIds: number[] = action.undoData?.createdAttendanceIds || [];
+    if (createdAttendanceIds.length === 0) return res.json({ success: true, undone: 0 });
+
+    await attendanceRepo.delete(createdAttendanceIds);
+
+    action.undone = true;
+    await actionRepo.save(action);
+
+    return res.json({ success: true, undone: createdAttendanceIds.length });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+}
+
+export async function undoIndividualAttendance(req: Request, res: Response) {
+  try {
+    const { actionId } = req.params as { actionId: string };
+    const attendanceRepo = AppDataSource.getRepository(Attendance);
+    const actionRepo = AppDataSource.getRepository(ActionLog);
+
+    const action = await actionRepo.findOne({ where: { id: actionId } });
+    if (!action) return res.status(404).json({ message: 'Action not found' });
+    if (action.actionType !== 'MARK_INDIVIDUAL_ATTENDANCE') return res.status(400).json({ message: 'Invalid action type' });
+    if (action.undone) return res.status(400).json({ message: 'Action already undone' });
+
+    const attendanceId: number = action.undoData?.attendanceId;
+    if (!attendanceId) return res.status(400).json({ message: 'No attendance ID found' });
+
+    await attendanceRepo.delete(attendanceId);
+
+    action.undone = true;
+    await actionRepo.save(action);
+
+    return res.json({ success: true, undone: 1 });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+}
+
+export async function unmarkMemberAttendance(req: Request, res: Response) {
+  try {
+    const { date, studentId } = req.params;
+    const userId = (req as any).auth?.sub;
+    
+    const repo = AppDataSource.getRepository(Attendance);
+    
+    // Find the attendance record
+    const attendance = await repo.findOne({
+      where: { 
+        date, 
+        type: AttendanceType.MEMBER, 
+        studentId 
+      }
+    });
+    
+    if (!attendance) {
+      return res.status(404).json({ message: "Attendance record not found for this student" });
+    }
+    
+    // Check if attendance is closed for this date
+    const dateStatus = await repo.findOne({
+      where: { date, type: AttendanceType.MEMBER }
+    });
+    
+    if (dateStatus?.status === AttendanceStatus.CLOSED) {
+      return res.status(400).json({ message: "Attendance is closed for this date" });
+    }
+    
+    // Delete the attendance record
+    await repo.delete(attendance.id);
+    
+    return res.json({ success: true, message: "Attendance unmarked successfully" });
   } catch (e) {
     console.error(e);
     return res.status(500).json({ message: "Internal server error" });

@@ -4,6 +4,7 @@ import { Student } from "../entities/Student";
 import { User } from "../entities/User";
 import { Attendance } from "../entities/Attendance";
 import bcrypt from "bcryptjs";
+import { ActionLog } from "../entities/ActionLog";
 
 export async function listUsers(req: Request, res: Response) {
   try {
@@ -177,62 +178,96 @@ export async function promoteStudents(req: Request, res: Response) {
     }
 
     const studentRepo = AppDataSource.getRepository(Student);
+    const actionRepo = AppDataSource.getRepository(ActionLog);
 
     // Find all students with the from level
-    const studentsToPromote = await studentRepo.find({
-      where: { level: fromLevel }
-    });
+    const studentsToPromote = await studentRepo.find({ where: { level: fromLevel } });
 
     if (studentsToPromote.length === 0) {
       return res.status(404).json({ message: `No students found with level ${fromLevel}` });
     }
 
     // Validate promotion is allowed for each student
-    const validPromotions = studentsToPromote.filter(student => {
+    const validStudents: Student[] = [];
+    for (const student of studentsToPromote) {
       const currentLevelNum = parseInt(fromLevel.replace('L', ''));
       const maxLevel = student.programDurationYears * 100;
-      
       if (toLevel === 'ALUMNI') {
-        return currentLevelNum >= maxLevel;
+        if (currentLevelNum >= maxLevel) validStudents.push(student);
       } else {
         const targetLevelNum = parseInt(toLevel.replace('L', ''));
-        return targetLevelNum <= maxLevel && targetLevelNum === currentLevelNum + 100;
+        if (targetLevelNum <= maxLevel && targetLevelNum === currentLevelNum + 100) validStudents.push(student);
       }
-    });
-
-    if (validPromotions.length === 0) {
-      return res.status(400).json({ 
-        message: `No students can be promoted from ${fromLevel} to ${toLevel} based on their program duration` 
-      });
     }
 
-    // Update students to the new level or alumni status
+    if (validStudents.length === 0) {
+      return res.status(400).json({ message: `No students can be promoted from ${fromLevel} to ${toLevel} based on their program duration` });
+    }
+
+    // Record previous levels for undo
+    const priorLevels = validStudents.map(s => ({ id: s.id, from: s.level }));
+
+    // Apply update
     if (toLevel === 'ALUMNI') {
-      // For alumni, we might want to update a status field or create a separate alumni table
-      // For now, let's update their level to indicate alumni status
-      await studentRepo.update(
-        { level: fromLevel },
-        { level: 'ALUMNI' }
-      );
+      await studentRepo.update({ level: fromLevel }, { level: 'ALUMNI' });
     } else {
-      await studentRepo.update(
-        { level: fromLevel },
-        { level: toLevel }
-      );
+      await studentRepo.update({ level: fromLevel }, { level: toLevel });
     }
+
+    // Log action for undo
+    const performerUserId = (req as any).auth?.sub || (req as any).user?.id || 'unknown';
+    const action = actionRepo.create({
+      actionType: 'PROMOTE_STUDENTS',
+      performerUserId,
+      metadata: {
+        fromLevel,
+        toLevel,
+        affectedStudentIds: validStudents.map(s => s.id)
+      },
+      undoData: { priorLevels }
+    });
+    const savedAction = await actionRepo.save(action);
 
     return res.json({
-      message: `Successfully promoted ${validPromotions.length} students from ${fromLevel} to ${toLevel}`,
-      promotedCount: validPromotions.length,
+      message: `Successfully promoted ${validStudents.length} students from ${fromLevel} to ${toLevel}`,
+      promotedCount: validStudents.length,
       fromLevel,
       toLevel,
-      totalStudents: studentsToPromote.length,
-      validPromotions: validPromotions.length
+      actionId: savedAction.id
     });
 
   } catch (error) {
     console.error('Promotion error:', error);
     return res.status(500).json({ message: "Internal server error" });
+  }
+}
+
+export async function undoPromotion(req: Request, res: Response) {
+  try {
+    const { actionId } = req.params as { actionId: string };
+    const actionRepo = AppDataSource.getRepository(ActionLog);
+    const studentRepo = AppDataSource.getRepository(Student);
+
+    const action = await actionRepo.findOne({ where: { id: actionId } });
+    if (!action) return res.status(404).json({ message: 'Action not found' });
+    if (action.actionType !== 'PROMOTE_STUDENTS') return res.status(400).json({ message: 'Invalid action type for this endpoint' });
+    if (action.undone) return res.status(400).json({ message: 'Action already undone' });
+
+    const priorLevels: Array<{ id: string; from: string }> = action.undoData?.priorLevels || [];
+    if (priorLevels.length === 0) return res.status(200).json({ message: 'Nothing to undo' });
+
+    // Restore previous levels
+    for (const item of priorLevels) {
+      await studentRepo.update({ id: item.id }, { level: item.from });
+    }
+
+    action.undone = true;
+    await actionRepo.save(action);
+
+    return res.json({ success: true, restored: priorLevels.length });
+  } catch (error) {
+    console.error('Undo promotion error:', error);
+    return res.status(500).json({ message: 'Internal server error' });
   }
 }
 

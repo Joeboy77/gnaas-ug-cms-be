@@ -80,9 +80,13 @@ A comprehensive backend API for the Ghana National Association of Adventist Stud
    MAILJET_SECRET_KEY=your_mailjet_secret_key
    MAILJET_FROM_EMAIL=your_from_email
    
-   # Admin Seed Configuration
+   # Admin Seed Configuration (Primary Admin)
    SEED_ADMIN_EMAIL=admin@gnaas.local
    SEED_ADMIN_PASSWORD=admin123456
+   
+   # Additional Super Admins (automatically created):
+   # - it1.admin@gnaas.local / john123456
+   # - it2.admin@gnaas.local / sarah123456
    ```
 
 4. **Database Setup**
@@ -207,6 +211,18 @@ gnaas-cms-be/
 - **SUPER_ADMIN**: Full system access, can create secretaries, manage all data
 - **SECRETARY**: Student management, attendance marking, limited admin functions
 
+## 🔐 Admin Login Credentials
+
+The following super admin accounts are automatically created when the backend starts for the first time:
+
+| Full Name | Email | Password | Role |
+|-----------|-------|----------|------|
+| Super Admin | admin@gnaas.local | admin123456 | SUPER_ADMIN |
+| John Admin | john.admin@gnaas.local | john123456 | SUPER_ADMIN |
+| Sarah Admin | sarah.admin@gnaas.local | sarah123456 | SUPER_ADMIN |
+
+> **Note**: These credentials are only created if no super admin exists in the database. After the first run, these accounts will persist in the database.
+
 ### Middleware
 - `requireAuth`: Validates JWT token
 - `requireRole`: Checks user role permissions
@@ -297,6 +313,11 @@ POST /auth/login
   "password": "admin123456"
 }
 ```
+
+**Available Admin Accounts:**
+- `admin@gnaas.local` / `admin123456`
+- `john.admin@gnaas.local` / `john123456`
+- `sarah.admin@gnaas.local` / `sarah123456`
 
 #### Login Response
 ```json

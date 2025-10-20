@@ -1,0 +1,12 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.studentsRouter = void 0;
+const express_1 = require("express");
+const students_controller_1 = require("../controllers/students.controller");
+const auth_1 = require("../middleware/auth");
+exports.studentsRouter = (0, express_1.Router)();
+exports.studentsRouter.get("/", auth_1.requireAuth, students_controller_1.listStudents);
+exports.studentsRouter.get("/next-code", auth_1.requireAuth, students_controller_1.nextStudentCode);
+exports.studentsRouter.post("/", auth_1.requireAuth, (0, auth_1.requireRoles)("SUPER_ADMIN", "SECRETARY"), students_controller_1.createStudent);
+exports.studentsRouter.put("/:id", auth_1.requireAuth, (0, auth_1.requireRoles)("SUPER_ADMIN", "SECRETARY"), students_controller_1.updateStudent);
+exports.studentsRouter.delete("/:id", auth_1.requireAuth, (0, auth_1.requireRoles)("SUPER_ADMIN"), students_controller_1.deleteStudent);
